@@ -4,6 +4,10 @@ Windowsのシステム環境変数およびユーザー環境変数（主に `PA
 
 重複の削除、パスの正規化、無効なパスの削除、適切なスコープ（System/User）への振り分けを安全かつ自動的に行います。
 
+```powershell
+Start-Process powershell -Verb runAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"iwr -useb https://raw.githubusercontent.com/nuitsjp/optimize-environment-variables/refs/heads/main/src/Optimize-EnvironmentVariable.ps1 | iex`""
+```
+
 ## 概要 (Features)
 
 このスクリプトは以下の問題を解決します：
@@ -23,17 +27,6 @@ Windowsのシステム環境変数およびユーザー環境変数（主に `PA
 *   **OS**: Windows 10 / 11 / Server 2016 以降
 *   **PowerShell**: 5.1 以上 (または PowerShell Core 7+)
 *   **権限**: システム環境変数を操作するため、**管理者権限 (Run as Administrator)** が必須です。
-
-## 使い方 (Usage)
-
-### クイックスタート (ワンライナー)
-GitHubから直接スクリプトを読み込み実行します。Keep/Update/Add/Remove の要約と PATH の文字数 (before/after/delta) を表示したうえで、`Y` 入力時に適用します。
-
-*   **Update**: 追加/削除はないが、同じ実体のパスをより短い表記（例: `C:\Users\...\AppData\Local` → `%LOCALAPPDATA%`）へ置き換えたものです。Keepしかなくても文字数が減るのはこのケースです。
-
-```powershell
-Start-Process powershell -Verb runAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"{Set-ExecutionPolicy RemoteSigned -scope CurrentUser -Force; iwr -useb https://raw.githubusercontent.com/nuitsjp/optimize-environment-variables/master/src/Optimize-EnvironmentVariable.ps1 | iex}`""
-```
 
 ### 変更を自動適用する場合
 対話を介さず適用するには、`-Force` スイッチを付与します（ワンライナーの場合はコード内の引数を修正するか、ローカルにダウンロードして実行してください）。
