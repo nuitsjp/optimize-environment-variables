@@ -27,92 +27,18 @@ Windowsのシステム環境変数およびユーザー環境変数（主に `PA
 ## 使い方 (Usage)
 
 ### クイックスタート (ワンライナー)
-GitHubから直接スクリプトを読み込み実行します。デフォルトは **Dry-Run（変更なし）** モードで動作し、変更予定の内容を画面に表示します。
+GitHubから直接スクリプトを読み込み実行します。Keep/Update/Add/Remove の要約と PATH の文字数 (before/after/delta) を表示したうえで、`Y` 入力時に適用します。
+
+*   **Update**: 追加/削除はないが、同じ実体のパスをより短い表記（例: `C:\Users\...\AppData\Local` → `%LOCALAPPDATA%`）へ置き換えたものです。Keepしかなくても文字数が減るのはこのケースです。
 
 ```powershell
 Start-Process powershell -Verb runAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"{Set-ExecutionPolicy RemoteSigned -scope CurrentUser -Force; iwr -useb https://raw.githubusercontent.com/nuitsjp/optimize-environment-variables/master/src/Optimize-EnvironmentVariable.ps1 | iex}`""
 ```
 
-### 変更を適用する場合
-実際に変更を適用するには、スクリプト実行時に `-Apply` スイッチを付与する必要があります（ワンライナーの場合はコード内の引数を修正するか、ローカルにダウンロードして実行してください）。
+### 変更を自動適用する場合
+対話を介さず適用するには、`-Force` スイッチを付与します（ワンライナーの場合はコード内の引数を修正するか、ローカルにダウンロードして実行してください）。
 
 ```powershell
-# ローカル実行例
-.\src\Optimize-EnvironmentVariable.ps1 -Apply -Verbose
+# ローカル実行例（無人適用）
+.\src\Optimize-EnvironmentVariable.ps1 -Force -Verbose
 ```
-
-## 仕様と設計 (Specification & Design)
-
-### 1. 安全性設計 (Safety First)
-
-*   **Dry-Run デフォルト**: 引数なしで実行した場合、システムに変更を加えません。シミュレーション結果のみを出力します。
-*   **自動バックアップ**: `-Apply` 指定時、変更前に現在の `PATH`（User/Machine）を JSON 形式で `$env:TEMP\EnvBackup_<Timestamp>.json` に保存します。
-*   **警告機能**: 結合後の環境変数文字列が 2048 文字（古いアプリの互換性目安）を超える場合、警告を表示します。
-
-### 2. パス正規化とデータ構造
-
-内部処理ではカスタムクラス `EnvPathItem` を定義し、以下の状態でパスを管理します。
-
-*   **RawPath**: 環境変数から読み取ったそのままの値（例: `%USERPROFILE%\bin\`）
-*   **ExpandedPath**: 変数を展開した絶対パス（例: `C:\Users\Nuits\bin\`）
-*   **NormalizedPath**: 比較用の正規化パス
-    *   すべて小文字化（Windowsはパスの大文字小文字を区別しないため）
-    *   ルートドライブ（`D:\`）以外の末尾スラッシュを削除（`C:\foo\` -> `c:\foo`）
-*   **Scope**: 現在の所属（`User` または `Machine`）
-
-### 3. 最適化アルゴリズム
-
-スクリプトは以下の順序でパイプライン処理を実行します。
-
-1.  **収集**: User と Machine の `PATH` を取得しリスト化。
-2.  **検証 (Validation)**:
-    *   `Test-Path` で存在確認を行い、存在しないパスはリストから除外（削除）します。
-3.  **変数の展開と正規化**:
-    *   すべてのパスを展開・正規化してプロパティに保持します。
-4.  **再配置 (Relocation)**:
-    *   **Userへの移動**: パスが `C:\Users\<CurrentUsers>\` 配下であり、かつ `Machine` スコープにある場合、`User` スコープへ移動フラグを立てます。
-    *   **Machineへの移動**: パスが `%SystemRoot%` や `%ProgramFiles%` 等のシステム領域、またはシステム変数ベースで定義されている場合、`Machine` スコープへの配置を推奨します。
-5.  **重複排除 (Deduplication)**:
-    *   各スコープ内で `NormalizedPath` をキーに重複を削除（順序は上位を維持）。
-    *   **クロススコープ排除**: `User` と `Machine` で重複する場合、`Machine` を残し `User` 側を削除します。
-6.  **変数の復元 (Reverse Lookup)**:
-    *   絶対パスになっているものを保存用に変数表記へ戻します。
-    *   例: `C:\Users\Nuits` -> `%USERPROFILE%`
-7.  **適用 (Commit)**:
-    *   レジストリおよび .NET API を通じて保存。
-    *   `SendMessageTimeout` (HWND_BROADCAST, WM_SETTINGCHANGE) を実行し、変更をOS全体に通知。
-
-## 開発構成 (Development)
-
-### リポジトリ構造
-```text
-optimize-environment-variables/
-├── .github/
-│   └── workflows/
-│       └── test.yml                 # GitHub Actions (Pester Test)
-├── src/
-│   └── Optimize-EnvironmentVariable.ps1  # メインスクリプト
-├── tests/
-│   └── Optimize-EnvironmentVariable.Tests.ps1 # テストコード
-└── README.md
-```
-
-### テスト戦略
-*   **フレームワーク**: Pester 5.x
-*   **カバレージ目標**: 85% 以上（Branch Coverage）
-*   **テストシナリオ**:
-    *   重複パスが1つになること。
-    *   末尾スラッシュ削除の挙動（`C:\` は消えず `C:\foo\` は消えること）。
-    *   SystemとUserの競合時にSystemが勝つこと。
-    *   Userプロファイル下のパスがSystemからUserへ移動すること。
-    *   存在しないパスが消えること。
-    *   Dry-Run時に変更が行われないこと。
-
-### テストの実行
-権限制約環境でのレジストリ書き込みを避けるため、`TestRegistry` を無効化した設定で実行します。
-
-```powershell
-pwsh -NoProfile -File bin/Invoke-Tests.ps1
-```
-
----

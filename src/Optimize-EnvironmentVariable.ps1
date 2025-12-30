@@ -1,6 +1,6 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [switch]$Apply
+    [switch]$Force
 )
 
 class EnvPathItem {
@@ -253,27 +253,185 @@ function Set-EnvironmentPath {
 
 function Send-EnvironmentChange {
     if (-not ([System.Management.Automation.PSTypeName]'OptimizeEnv.NativeMethods').Type) {
-        Add-Type -Namespace OptimizeEnv -Name NativeMethods -MemberDefinition @"
+        $typeDefinition = @"
 using System;
 using System.Runtime.InteropServices;
 
-public static class NativeMethods
+namespace OptimizeEnv
 {
-    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
-    public static extern IntPtr SendMessageTimeout(
-        IntPtr hWnd,
-        uint Msg,
-        UIntPtr wParam,
-        string lParam,
-        uint fuFlags,
-        uint uTimeout,
-        out UIntPtr lpdwResult);
+    public static class NativeMethods
+    {
+        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+        public static extern IntPtr SendMessageTimeout(
+            IntPtr hWnd,
+            uint Msg,
+            UIntPtr wParam,
+            string lParam,
+            uint fuFlags,
+            uint uTimeout,
+            out UIntPtr lpdwResult);
+    }
 }
-"@ -ErrorAction SilentlyContinue | Out-Null
+"@
+
+        Add-Type -TypeDefinition $typeDefinition -ErrorAction Stop | Out-Null
     }
 
     $result = [UIntPtr]::Zero
     [OptimizeEnv.NativeMethods]::SendMessageTimeout([IntPtr]0xffff, 0x001A, [UIntPtr]::Zero, 'Environment', 0x0002, 1000, [ref]$result) | Out-Null
+}
+
+function Get-PathDiff {
+    [CmdletBinding()]
+    param(
+        [string[]]$Before,
+        [string[]]$After
+    )
+
+    $beforeItems = @()
+    foreach ($path in ($Before | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+        $beforeItems += [EnvPathItem]::new($path, 'Diff')
+    }
+
+    $afterItems = @()
+    foreach ($path in ($After | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+        $afterItems += [EnvPathItem]::new($path, 'Diff')
+    }
+
+    $afterSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $afterDisplay = @{}
+    foreach ($item in $afterItems) {
+        if ($null -eq $item.NormalizedPath) { continue }
+        if ($afterSet.Add($item.NormalizedPath)) {
+            $afterDisplay[$item.NormalizedPath] = $item.RawPath
+        }
+    }
+
+    $beforeSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $beforeDisplay = @{}
+    foreach ($item in $beforeItems) {
+        if ($null -eq $item.NormalizedPath) { continue }
+        if ($beforeSet.Add($item.NormalizedPath)) {
+            $beforeDisplay[$item.NormalizedPath] = $item.RawPath
+        }
+    }
+
+    $kept = @()
+    $updated = @()
+    $keptSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($item in $beforeItems) {
+        if ($null -eq $item.NormalizedPath) { continue }
+        if ($afterSet.Contains($item.NormalizedPath) -and $keptSet.Add($item.NormalizedPath)) {
+            $beforeComparable = [EnvPathItem]::RemoveTrailingSeparator($beforeDisplay[$item.NormalizedPath])
+            $afterComparable = [EnvPathItem]::RemoveTrailingSeparator($afterDisplay[$item.NormalizedPath])
+
+            if ([string]::Equals($beforeComparable, $afterComparable, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $kept += $afterDisplay[$item.NormalizedPath]
+            }
+            else {
+                $updated += $afterDisplay[$item.NormalizedPath]
+            }
+        }
+    }
+
+    $removed = @()
+    $removedSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($item in $beforeItems) {
+        if ($null -eq $item.NormalizedPath) { continue }
+        if (-not $afterSet.Contains($item.NormalizedPath) -and $removedSet.Add($item.NormalizedPath)) {
+            $removed += $item.RawPath
+        }
+    }
+
+    $added = @()
+    $addedSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($item in $afterItems) {
+        if ($null -eq $item.NormalizedPath) { continue }
+        if (-not $beforeSet.Contains($item.NormalizedPath) -and $addedSet.Add($item.NormalizedPath)) {
+            $added += $item.RawPath
+        }
+    }
+
+    return [PSCustomObject]@{
+        Kept    = $kept
+        Updated = $updated
+        Removed = $removed
+        Added   = $added
+    }
+}
+
+function Format-PathGroup {
+    [CmdletBinding()]
+    param(
+        [string]$Label,
+        [string[]]$Paths
+    )
+
+    $lines = @("  ${Label}:")
+
+    if (-not $Paths -or $Paths.Count -eq 0) {
+        $lines += '    (none)'
+        return $lines
+    }
+
+    foreach ($path in $Paths) {
+        $lines += "    - $path"
+    }
+
+    return $lines
+}
+
+function Get-PathStringLength {
+    [CmdletBinding()]
+    param(
+        [string[]]$Paths
+    )
+
+    $joined = Join-PathList -Paths $Paths
+    return ([string]$joined).Length
+}
+
+function Format-LengthLine {
+    [CmdletBinding()]
+    param(
+        [string]$ScopeName,
+        [int]$Before,
+        [int]$After
+    )
+
+    $delta = $After - $Before
+    $deltaText = if ($delta -gt 0) { "+$delta" } elseif ($delta -lt 0) { "$delta" } else { "0" }
+    return ("{0} (chars: before {1} -> after {2}, delta {3})" -f $ScopeName, $Before, $After, $deltaText)
+}
+
+function Format-OptimizationResult {
+    [CmdletBinding()]
+    param(
+        [pscustomobject]$Result
+    )
+
+    $userDiff = Get-PathDiff -Before $Result.UserBefore -After $Result.UserAfter
+    $machineDiff = Get-PathDiff -Before $Result.MachineBefore -After $Result.MachineAfter
+
+    $userBeforeLength = Get-PathStringLength -Paths $Result.UserBefore
+    $userAfterLength = Get-PathStringLength -Paths $Result.UserAfter
+    $machineBeforeLength = Get-PathStringLength -Paths $Result.MachineBefore
+    $machineAfterLength = Get-PathStringLength -Paths $Result.MachineAfter
+
+    $lines = @()
+    $lines += (Format-LengthLine -ScopeName 'User PATH' -Before $userBeforeLength -After $userAfterLength)
+    $lines += (Format-PathGroup -Label 'Keep' -Paths $userDiff.Kept)
+    $lines += (Format-PathGroup -Label 'Update' -Paths $userDiff.Updated)
+    $lines += (Format-PathGroup -Label 'Add' -Paths $userDiff.Added)
+    $lines += (Format-PathGroup -Label 'Remove' -Paths $userDiff.Removed)
+    $lines += ''
+    $lines += (Format-LengthLine -ScopeName 'Machine PATH' -Before $machineBeforeLength -After $machineAfterLength)
+    $lines += (Format-PathGroup -Label 'Keep' -Paths $machineDiff.Kept)
+    $lines += (Format-PathGroup -Label 'Update' -Paths $machineDiff.Updated)
+    $lines += (Format-PathGroup -Label 'Add' -Paths $machineDiff.Added)
+    $lines += (Format-PathGroup -Label 'Remove' -Paths $machineDiff.Removed)
+
+    return $lines
 }
 
 function Invoke-OptimizeEnvironmentVariable {
@@ -281,11 +439,12 @@ function Invoke-OptimizeEnvironmentVariable {
     param(
         [string]$UserPath,
         [string]$MachinePath,
-        [switch]$Apply,
+        [switch]$Force,
         [string]$BackupDirectory,
         [ScriptBlock]$BackupHandler,
         [ScriptBlock]$SetEnvironmentPathHandler,
-        [ScriptBlock]$SendEnvironmentChangeHandler
+        [ScriptBlock]$SendEnvironmentChangeHandler,
+        [ScriptBlock]$PromptHandler
     )
 
     $currentUserPath = if ($PSBoundParameters.ContainsKey('UserPath')) { $UserPath } else { [Environment]::GetEnvironmentVariable('PATH', 'User') }
@@ -296,14 +455,32 @@ function Invoke-OptimizeEnvironmentVariable {
 
     $optimized = Optimize-EnvironmentPaths -UserPaths $userPaths -MachinePaths $machinePaths
 
+    $summary = Format-OptimizationResult -Result ([PSCustomObject]@{
+            UserBefore    = $userPaths
+            MachineBefore = $machinePaths
+            UserAfter     = $optimized.User
+            MachineAfter  = $optimized.Machine
+        })
+
     $result = [PSCustomObject]@{
-        UserBefore    = $userPaths
-        MachineBefore = $machinePaths
-        UserAfter     = $optimized.User
-        MachineAfter  = $optimized.Machine
+        UserBefore      = $userPaths
+        MachineBefore   = $machinePaths
+        UserAfter       = $optimized.User
+        MachineAfter    = $optimized.Machine
+        Summary         = $summary
+        SummaryPrinted  = $false
     }
 
-    if ($Apply) {
+    $shouldApply = $Force
+    if (-not $Force) {
+        $summary | Out-Host
+        $result.SummaryPrinted = $true
+
+        $promptAction = if ($PromptHandler) { $PromptHandler } else { { param($lines) $response = Read-Host 'Apply optimized PATH changes? (Y/N)'; return $response -match '^[Yy]' } }
+        $shouldApply = & $promptAction $summary
+    }
+
+    if ($shouldApply) {
         if ($WhatIfPreference) {
             Write-Verbose 'WhatIf指定のため適用をスキップします。'
         }
@@ -320,12 +497,15 @@ function Invoke-OptimizeEnvironmentVariable {
         }
     }
     else {
-        Write-Verbose 'Dry-Runモード。-Apply を指定すると変更を保存します。'
+        Write-Verbose '変更を適用しませんでした。'
     }
 
     return $result
 }
 
-if ($MyInvocation.InvocationName -ne '.') {
-    Invoke-OptimizeEnvironmentVariable @PSBoundParameters
-}
+    if ($MyInvocation.InvocationName -ne '.') {
+        $result = Invoke-OptimizeEnvironmentVariable @PSBoundParameters
+        if (-not $result.SummaryPrinted) {
+            $result.Summary | Out-Host
+        }
+    }
