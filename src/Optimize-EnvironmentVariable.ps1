@@ -72,8 +72,6 @@ function Get-PathVariableMap {
         'ProgramFiles',
         'ProgramFiles(x86)',
         'ProgramData',
-        'LOCALAPPDATA',
-        'APPDATA',
         'TEMP',
         'TMP',
         'JAVA_HOME'
@@ -100,7 +98,8 @@ function Get-RawEnvironmentPath {
 
     $key = if ($Scope -eq 'User') {
         [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment')
-    } else {
+    }
+    else {
         [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment')
     }
 
@@ -110,7 +109,8 @@ function Get-RawEnvironmentPath {
 
     try {
         return $key.GetValue('Path', $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-    } finally {
+    }
+    finally {
         $key.Dispose()
     }
 }
@@ -487,12 +487,12 @@ function Invoke-OptimizeEnvironmentVariable {
         })
 
     $result = [PSCustomObject]@{
-        UserBefore      = $userPaths
-        MachineBefore   = $machinePaths
-        UserAfter       = $optimized.User
-        MachineAfter    = $optimized.Machine
-        Summary         = $summary
-        SummaryPrinted  = $false
+        UserBefore     = $userPaths
+        MachineBefore  = $machinePaths
+        UserAfter      = $optimized.User
+        MachineAfter   = $optimized.Machine
+        Summary        = $summary
+        SummaryPrinted = $false
     }
 
     $shouldApply = $Force
@@ -527,9 +527,9 @@ function Invoke-OptimizeEnvironmentVariable {
     return $result
 }
 
-    if ($MyInvocation.InvocationName -ne '.') {
-        $result = Invoke-OptimizeEnvironmentVariable @PSBoundParameters
-        if (-not $result.SummaryPrinted) {
-            $result.Summary | Out-Host
-        }
+if ($MyInvocation.InvocationName -ne '.') {
+    $result = Invoke-OptimizeEnvironmentVariable @PSBoundParameters
+    if (-not $result.SummaryPrinted) {
+        $result.Summary | Out-Host
     }
+}
