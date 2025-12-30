@@ -1,0 +1,5 @@
+@{
+    TestRegistry = @{
+        Enabled = $false
+    }
+}

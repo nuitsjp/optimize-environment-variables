@@ -108,4 +108,11 @@ optimize-environment-variables/
     *   存在しないパスが消えること。
     *   Dry-Run時に変更が行われないこと。
 
+### テストの実行
+権限制約環境でのレジストリ書き込みを避けるため、`TestRegistry` を無効化した設定で実行します。
+
+```powershell
+pwsh -NoProfile -File bin/Invoke-Tests.ps1
+```
+
 ---
