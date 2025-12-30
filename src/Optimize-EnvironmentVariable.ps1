@@ -91,6 +91,30 @@ function Get-PathVariableMap {
     return $map
 }
 
+function Get-RawEnvironmentPath {
+    [CmdletBinding()]
+    param(
+        [ValidateSet('User', 'Machine')]
+        [string]$Scope
+    )
+
+    $key = if ($Scope -eq 'User') {
+        [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment')
+    } else {
+        [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment')
+    }
+
+    if ($null -eq $key) {
+        return $null
+    }
+
+    try {
+        return $key.GetValue('Path', $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+    } finally {
+        $key.Dispose()
+    }
+}
+
 function Get-PreferredPath {
     param(
         [EnvPathItem]$Item,
@@ -447,8 +471,8 @@ function Invoke-OptimizeEnvironmentVariable {
         [ScriptBlock]$PromptHandler
     )
 
-    $currentUserPath = if ($PSBoundParameters.ContainsKey('UserPath')) { $UserPath } else { [Environment]::GetEnvironmentVariable('PATH', 'User') }
-    $currentMachinePath = if ($PSBoundParameters.ContainsKey('MachinePath')) { $MachinePath } else { [Environment]::GetEnvironmentVariable('PATH', 'Machine') }
+    $currentUserPath = if ($PSBoundParameters.ContainsKey('UserPath')) { $UserPath } else { Get-RawEnvironmentPath -Scope 'User' }
+    $currentMachinePath = if ($PSBoundParameters.ContainsKey('MachinePath')) { $MachinePath } else { Get-RawEnvironmentPath -Scope 'Machine' }
 
     $userPaths = Split-PathList -PathValue $currentUserPath
     $machinePaths = Split-PathList -PathValue $currentMachinePath

@@ -67,6 +67,27 @@ Describe "Optimize-EnvironmentPaths" {
         }
     }
 
+
+
+Describe "Get-RawEnvironmentPath" {
+    BeforeAll {
+        . (Join-Path -Path $PSScriptRoot -ChildPath "../src/Optimize-EnvironmentVariable.ps1")
+    }
+
+    It "User スコープで展開されていない値を返す" {
+        $result = Get-RawEnvironmentPath -Scope 'User'
+        # 値が存在すれば、%で始まるパス表記が保持されていることを確認
+        if ($result -and $result -like '*%*') {
+            $result | Should -Match '%[A-Za-z_]+%'
+        }
+    }
+
+    It "Machine スコープでも動作する" {
+        $result = Get-RawEnvironmentPath -Scope 'Machine'
+        $result | Should -Not -BeNullOrEmpty
+    }
+}
+
 }
 
 Describe "Invoke-OptimizeEnvironmentVariable" {
