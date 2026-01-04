@@ -272,7 +272,24 @@ function Set-EnvironmentPath {
     )
 
     $value = Join-PathList -Paths $Paths
-    [Environment]::SetEnvironmentVariable('PATH', $value, $Scope)
+
+    $key = if ($Scope -eq 'User') {
+        [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+    }
+    else {
+        [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment', $true)
+    }
+
+    if ($null -eq $key) {
+        throw "Failed to open registry key for scope: $Scope"
+    }
+
+    try {
+        $key.SetValue('Path', $value, [Microsoft.Win32.RegistryValueKind]::ExpandString)
+    }
+    finally {
+        $key.Dispose()
+    }
 }
 
 function Send-EnvironmentChange {
